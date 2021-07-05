@@ -1,7 +1,13 @@
 import { ClientOptions as DiscordJSClientOptions } from "discord.js";
+import { GuardFunction } from "../public/GuardFunction";
 import { LoadClass } from "./LoadClass";
 
 export interface ClientOptions extends DiscordJSClientOptions {
+  /**
+   * Specifiy bot id (added for multiple bot support)
+   */
+  botId: string;
+
   /**
    * Do not log anything in the console
    */
@@ -10,11 +16,20 @@ export interface ClientOptions extends DiscordJSClientOptions {
   /**
    * The classes to load for your discord bot
    */
-  classes: LoadClass[];
+  classes?: LoadClass[];
 
   /**
-   * The char that match your command args variables
-   * @default ":"
+   * The global guards
    */
-  variablesChar: string;
+  guards?: GuardFunction[];
+
+  /**
+   * Set the default required value for @Option
+   */
+  requiredByDefault?: boolean;
+
+  /**
+   * Set the guilds globaly
+   */
+  slashGuilds?: string[];
 }

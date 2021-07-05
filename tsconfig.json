@@ -4,23 +4,22 @@
     "target": "es2019",
     "noImplicitAny": false,
     "sourceMap": true,
+    "strict": true /* Enable all strict type-checking options. */,
     "outDir": "build",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "declaration": true,
     "importHelpers": true,
     "forceConsistentCasingInFileNames": true,
-    "lib": [
-      "ES2020",
-      "ES2017",
-      "esnext.asynciterable"
-    ],
+    "lib": ["ES2020", "ES2017", "esnext.asynciterable"],
     "moduleResolution": "node"
   },
   "exclude": [
     "node_modules",
     "tests",
     "examples",
-    "**/*.spec.ts"
+    "guides",
+    "**/*.spec.ts",
+    "starter-projects"
   ]
 }

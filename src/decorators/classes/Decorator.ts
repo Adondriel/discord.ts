@@ -1,10 +1,15 @@
 import { DecoratorUtils } from "../../logic";
 
 export class Decorator {
-  protected _classRef: Function;
-  protected _from: Function;
-  protected _key: string;
-  protected _method: Function;
+  protected _classRef!: Function;
+  protected _from!: Function;
+  protected _key!: string;
+  protected _method!: Function;
+  protected _index: number | undefined = undefined;
+
+  get index() {
+    return this._index;
+  }
 
   get classRef() {
     return this._classRef;
@@ -34,26 +39,30 @@ export class Decorator {
   }
 
   protected constructor() {
-  }
-
-  static create(...params: any[]) {
+    // empty constructor
   }
 
   decorateUnknown(
-    classRef: Function,
+    classRef: Function | Object,
     key?: string,
-    method?: PropertyDescriptor
+    method?: PropertyDescriptor,
+    index?: number
   ) {
-    const decorateAClass = DecoratorUtils.decorateAClass(method);
+    const decorateAClass =
+      DecoratorUtils.decorateAClass(method) && index === undefined;
 
-    const finalClassRef = decorateAClass ? classRef : classRef.constructor;
+    const finalClassRef: Function = decorateAClass
+      ? (classRef as Function)
+      : classRef.constructor;
     const finalKey = decorateAClass ? finalClassRef.name : key;
     const finalMethod = decorateAClass ? finalClassRef : method?.value;
 
     return this.decorate(
       finalClassRef,
-      finalKey,
-      finalMethod
+      finalKey as string,
+      finalMethod,
+      finalClassRef,
+      index
     );
   }
 
@@ -61,12 +70,14 @@ export class Decorator {
     classRef: Function,
     key: string,
     method?: Function,
-    from?: Function
+    from?: Function,
+    index?: number
   ) {
     this._from = from || classRef;
     this._classRef = classRef;
     this._key = key;
-    this._method = method;
+    this._method = method as Function;
+    this._index = index as number;
 
     this.update();
 
@@ -74,5 +85,6 @@ export class Decorator {
   }
 
   update() {
+    // empty function
   }
 }

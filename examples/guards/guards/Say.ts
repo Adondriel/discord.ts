@@ -1,13 +1,13 @@
+import { CommandInteraction } from "discord.js";
 import { ArgsOf, GuardFunction } from "../../../src";
 
 export const Say = (text: string) => {
-  const guard: GuardFunction<"commandMessage"> = async (
-    [message],
+  const guard: GuardFunction<ArgsOf<"messageCreate"> | CommandInteraction> = async (
+    messageOrCommand,
     client,
     next,
     nextObj
   ) => {
-    console.log(message.prefix, text);
     await next();
   };
 

@@ -1,93 +1,111 @@
 import { Decorator } from "./Decorator";
-import {
-  DCommandNotFound,
-  Commandable,
-  Expression,
-  ArgsRulesFunction,
-  InfosType,
-  ExpressionFunction,
-  RuleBuilder,
-  CommandMessage,
-  Rule,
-  DiscordInfos
-} from "../..";
+import { DGuard, DSlash, DIService, DOn } from "../..";
+import { DButton } from "./DButton";
+import { DSelectMenu } from "./DSelectMenu";
+import { ApplicationCommandPermissionData } from "discord.js";
 
-export class DDiscord extends Decorator implements Commandable<Expression> {
-  protected _argsRules: ArgsRulesFunction[];
-  protected _commandNotFound?: DCommandNotFound;
-  protected _instance?: Function;
-  protected _originalRules: Partial<Commandable> = {};
-  protected _infos: InfosType = {};
-  protected _prefix: Expression | ExpressionFunction;
+export class DDiscord extends Decorator {
+  private _guards: DGuard[] = [];
+  private _buttons: DButton[] = [];
+  private _selectMenus: DSelectMenu[] = [];
+  private _slashes: DSlash[] = [];
+  private _events: DOn[] = [];
+  private _description!: string;
+  private _name!: string;
+  private _defaultPermission = true;
+  private _permissions: ApplicationCommandPermissionData[] = [];
+  private _guilds: string[] = [];
+  private _botIds: string[] = [];
 
-  get originalRules() {
-    return this._originalRules;
+  get permissions() {
+    return this._permissions;
+  }
+  set permissions(value) {
+    this._permissions = value;
+  }
+
+  get botIds() {
+    return this._botIds;
+  }
+  set botIds(value) {
+    this._botIds = value;
+  }
+
+  get guilds() {
+    return this._guilds;
+  }
+  set guilds(value) {
+    this._guilds = value;
+  }
+
+  get defaultPermission() {
+    return this._defaultPermission;
+  }
+  set defaultPermission(value) {
+    this._defaultPermission = value;
   }
 
   get description() {
-    return this._infos.description;
+    return this._description;
+  }
+  set description(value) {
+    this._description = value;
   }
 
-  get prefix() {
-    return this._prefix;
+  get name() {
+    return this._name;
+  }
+  set name(value) {
+    this._name = value;
   }
 
-  get infos() {
-    return this._infos;
+  get guards() {
+    return this._guards;
   }
-  set infos(value) {
-    this._infos = value;
+  set guards(value) {
+    this._guards = value;
   }
 
-  get argsRules() {
-    return this._argsRules;
+  get slashes() {
+    return this._slashes;
   }
-  set argsRules(value) {
-    this._argsRules = value;
+  set slashes(value) {
+    this._slashes = value;
+  }
+
+  get buttons() {
+    return this._buttons;
+  }
+  set buttons(value) {
+    this._buttons = value;
+  }
+
+  get selectMenus() {
+    return this._selectMenus;
+  }
+  set selectMenus(value) {
+    this._selectMenus = value;
+  }
+
+  get events() {
+    return this._events;
+  }
+  set events(value) {
+    this._events = value;
   }
 
   get instance() {
-    return this._instance;
+    return DIService.instance.getService(this.from);
   }
 
-  get commandNotFound() {
-    return this._commandNotFound;
-  }
-  set commandNotFound(value: DCommandNotFound) {
-    this._commandNotFound = value;
+  protected constructor() {
+    super();
   }
 
-  get discordInfos(): DiscordInfos {
-    return {
-      description: this.description,
-      infos: this.infos,
-      argsRules: this.argsRules,
-      prefix: this.prefix
-    };
-  }
-
-  static createDiscord(
-    prefix: Expression | ExpressionFunction
-  ) {
+  static create(name: string) {
     const discord = new DDiscord();
 
-    let finalPrefix = prefix;
-
-    if (RuleBuilder.typeOfExpression(prefix) === String) {
-      finalPrefix = RuleBuilder.escape(prefix as string);
-    }
-
-    const escapedPrefix = finalPrefix;
-
-    if (typeof escapedPrefix !== "function") {
-      const isRuleBuilder = escapedPrefix instanceof RuleBuilder;
-      finalPrefix = isRuleBuilder ? () => escapedPrefix as Expression : () => Rule().startWith(escapedPrefix as Expression);
-    }
-
-    discord._argsRules = [
-      async (command: CommandMessage) => [await (finalPrefix as ExpressionFunction)(command)]
-    ];
-    discord._prefix = escapedPrefix;
+    discord.name = name;
 
     return discord;
   }

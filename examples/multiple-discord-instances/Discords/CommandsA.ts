@@ -1,23 +1,10 @@
-import {
-  Discord,
-  Command,
-  CommandNotFound,
-  CommandMessage,
-  Client,
-  Once
-} from "../../../src";
+import { Discord, Slash } from "../../../src";
+import { CommandInteraction } from "discord.js";
 
-@Discord(".")
-export class CommandsA {
-  @Command("hello")
-  hello(command: CommandMessage, client: Client) {
-    console.log(client);
-    command.reply("Hello A");
-  }
-
-  @CommandNotFound()
-  notFound(command: CommandMessage, client: Client) {
-    console.log(client);
-    command.reply("NotFound A");
+@Discord()
+export class CommandsB {
+  @Slash("hello2")
+  hello2(interaction: CommandInteraction) {
+    interaction.reply("Hello 2");
   }
 }

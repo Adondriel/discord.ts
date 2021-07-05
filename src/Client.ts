@@ -1,30 +1,127 @@
-import { Client as ClientJS, ClientEvents } from "discord.js";
+import {
+  ApplicationCommand,
+  Client as ClientJS,
+  CommandInteraction,
+  CommandInteractionOption,
+  Interaction,
+  Snowflake,
+} from "discord.js";
 import * as Glob from "glob";
 import {
   MetadataStorage,
   LoadClass,
   ClientOptions,
   DiscordEvents,
-  CommandInfos,
-  InfosType,
-  CommandNotFoundInfos,
-  EventInfos,
-  DiscordInfos,
-  DOn
+  DOn,
+  GuardFunction,
 } from ".";
+import { DButton, DDiscord, DOption, DSelectMenu, DSlash } from "./decorators";
+import { GuildNotFoundError } from "./errors";
 
 export class Client extends ClientJS {
-  private static _variablesChar: string;
-  private static _variablesExpression: RegExp;
+  private static isBuilt = false;
+  private _botId: string;
   private _silent: boolean;
-  private _loadClasses: LoadClass[];
+  private _loadClasses: LoadClass[] = [];
+  private static _requiredByDefault = false;
+  private static _slashGuilds: string[] = [];
+  private static _guards: GuardFunction[] = [];
+  private _metadataStorage = new MetadataStorage();
 
-  static get variablesChar() {
-    return this._variablesChar;
+  static get slashGuilds() {
+    return Client._slashGuilds;
+  }
+  static set slashGuilds(value) {
+    Client._slashGuilds = value;
   }
 
-  static get variablesExpression() {
-    return this._variablesExpression;
+  get botId() {
+    return this._botId;
+  }
+  set botId(value) {
+    this._botId = value;
+  }
+
+  get slashGuilds() {
+    return Client._slashGuilds;
+  }
+  set slashGuilds(value) {
+    Client._slashGuilds = value;
+  }
+
+  static get requiredByDefault() {
+    return Client._requiredByDefault;
+  }
+  static set requiredByDefault(value) {
+    Client._requiredByDefault = value;
+  }
+  get requiredByDefault() {
+    return Client._requiredByDefault;
+  }
+  set requiredByDefault(value) {
+    Client._requiredByDefault = value;
+  }
+
+  static get guards() {
+    return Client._guards;
+  }
+  static set guards(value) {
+    Client._guards = value;
+  }
+  get guards() {
+    return Client.guards;
+  }
+  set guards(value) {
+    Client._guards = value;
+  }
+
+  static get slashes() {
+    return MetadataStorage.instance.slashes as readonly DSlash[];
+  }
+  get slashes() {
+    return Client.slashes;
+  }
+
+  static get buttons() {
+    return MetadataStorage.instance.buttons as readonly DButton[];
+  }
+  get buttons() {
+    return Client.buttons;
+  }
+
+  static get selectMenus() {
+    return MetadataStorage.instance.selectMenus as readonly DSelectMenu[];
+  }
+  get selectMenus() {
+    return Client.selectMenus;
+  }
+
+  static get allSlashes() {
+    return MetadataStorage.instance.allSlashes as readonly DSlash[];
+  }
+  get allSlashes() {
+    return Client.allSlashes;
+  }
+
+  static get events() {
+    return MetadataStorage.instance.events as readonly DOn[];
+  }
+  get events() {
+    return Client.events;
+  }
+
+  static get discords() {
+    return MetadataStorage.instance.discords as readonly DDiscord[];
+  }
+  get discord() {
+    return Client.discords;
+  }
+
+  static get decorators() {
+    return MetadataStorage.instance;
+  }
+  get decorators() {
+    return this._metadataStorage;
   }
 
   get silent() {
@@ -38,54 +135,15 @@ export class Client extends ClientJS {
    * Create your bot
    * @param options { silent: boolean, loadClasses: LoadClass[] }
    */
-  constructor(options?: ClientOptions) {
+  constructor(options: ClientOptions) {
     super(options);
 
-    this._silent = options?.silent !== undefined || false;
+    this._silent = !!options?.silent;
     this._loadClasses = options?.classes || [];
-
-    Client._variablesChar = options?.variablesChar || ":";
-    Client._variablesExpression = new RegExp(`\\s{1,}${Client._variablesChar}\\w*`, "g");
-  }
-
-  /**
-   * Get the details about the created commands of your app (@Command)
-   */
-  static getCommands<Type extends InfosType = any>(): CommandInfos<Type>[] {
-    return MetadataStorage.instance.commands.map<CommandInfos<Type>>((c) => c.commandInfos);
-  }
-
-  /**
-   * Get the details about the created events of your app (@On)
-   */
-  static getEvent(): EventInfos[] {
-    return MetadataStorage.instance.events.map<EventInfos>((event) => {
-      return {
-        event: event.event,
-        once: event.once,
-        linkedInstance: event.linkedDiscord
-      };
-    });
-  }
-
-  /**
-   * Get the details about the created discords of your app (@Discord)
-   */
-  static getDiscords<Type extends InfosType = any>(): DiscordInfos<Type>[] {
-    return MetadataStorage.instance.discords.map<DiscordInfos<Type>>((d) => d.discordInfos);
-  }
-
-  /**
-   * Get the details about the created commandsNotFound of your app (@CommandNotFound)
-   */
-  static getCommandsNotFound<Type extends InfosType = any>(): CommandNotFoundInfos<Type>[] {
-    return MetadataStorage.instance.commandsNotFound.map<CommandNotFoundInfos<Type>>((c) => {
-      return {
-        infos: c.infos as InfosType<Type>,
-        prefix: c.linkedDiscord.prefix,
-        description: c.infos.description
-      };
-    });
+    this.guards = options.guards || [];
+    this.requiredByDefault = options.requiredByDefault ?? false;
+    this.slashGuilds = options.slashGuilds || [];
+    this._botId = options.botId;
   }
 
   /**
@@ -93,50 +151,60 @@ export class Client extends ClientJS {
    * @param token The bot token
    * @param loadClasses A list of glob path or classes
    */
-  login(token: string, ...loadClasses: LoadClass[]) {
-    if (loadClasses.length > 0) {
+  async login(token: string, ...loadClasses: LoadClass[]) {
+    if (loadClasses.length) {
       this._loadClasses = loadClasses;
     }
 
-    this.build();
+    await this.build();
 
-    MetadataStorage.instance.events.map((event) => {
-      if (!this.silent) {
-        let eventName = event.event;
-        console.log(`${eventName}: ${event.classRef.name}.${event.key}`);
+    if (!this.silent) {
+      console.log("Events");
+      if (this.events.length) {
+        this.events.map((event) => {
+          const eventName = event.event;
+          console.log(`   ${eventName} (${event.classRef.name}.${event.key})`);
+        });
+      } else {
+        console.log("   No events detected");
       }
-    });
 
-    const usedEvents = (
-      MetadataStorage.instance.events
-      .reduce<DOn[]>((prev, event, index) => {
-        const found = MetadataStorage.instance.events.find((event2) => event.event === event2.event);
-        const foundIndex = MetadataStorage.instance.events.indexOf(found);
-        if (foundIndex === index || found.once !== event.once) {
-          prev.push(event);
-        }
-        return prev;
-      }, [])
-    );
+      console.log("");
 
-    usedEvents.map(async (on) => {
+      console.log("Slashes");
+      if (this.slashes.length) {
+        this.slashes.map((slash) => {
+          console.log(`   ${slash.name} (${slash.classRef.name}.${slash.key})`);
+          const printOptions = (options: DOption[], depth: number) => {
+            if (!options) return;
+
+            const tab = Array(depth).join("      ");
+
+            options.forEach((option) => {
+              console.log(
+                `${tab}${option.name}: ${option.stringType} (${option.classRef.name}.${option.key})`
+              );
+              printOptions(option.options, depth + 1);
+            });
+          };
+
+          printOptions(slash.options, 2);
+
+          console.log("");
+        });
+      } else {
+        console.log("   No slashes detected");
+      }
+    }
+
+    this.decorators.usedEvents.map(async (on) => {
       if (on.once) {
         this.once(
           on.event as any,
-          MetadataStorage.instance.trigger(
-            on.event,
-            this,
-            true
-          )
+          this.decorators.trigger(on.event, this, true)
         );
       } else {
-        this.on(
-          on.event as any,
-          MetadataStorage.instance.trigger(
-            on.event,
-            this
-          )
-        );
+        this.on(on.event as any, this.decorators.trigger(on.event, this));
       }
     });
 
@@ -144,11 +212,355 @@ export class Client extends ClientJS {
   }
 
   /**
+   * Initialize all the @Slash with their permissions
+   */
+  async initSlashes(options?: {
+    log: { forGuild: boolean; forGlobal: boolean };
+  }) {
+    // # group guild slashes by guildId
+    const guildSlashStorage = new Map<string, DSlash[]>();
+    const guildsSlash = this.slashes.filter((s) => s.guilds?.length);
+
+    // group single guild slashes together
+    guildsSlash.forEach((s) => {
+      s.guilds.forEach((guild) =>
+        guildSlashStorage.set(guild, [
+          ...(guildSlashStorage.get(guild) ?? []),
+          s,
+        ])
+      );
+    });
+
+    // run task to add/update/delete slashes for guilds
+    guildSlashStorage.forEach(async (slashes, key) => {
+      const guild = await this.guilds.fetch({ guild: key as Snowflake });
+      if (!guild) return console.log("guild not found");
+
+      // fetch already registered command
+      const existing = await guild.commands.fetch();
+
+      // filter only unregistered command
+      const added = slashes.filter(
+        (s) =>
+          !existing.find((c) => c.name === s.name) &&
+          (!s.botIds.length || s.botIds.includes(this.botId))
+      );
+
+      // filter slashes to update
+      const updated = slashes
+        .map<[ApplicationCommand | undefined, DSlash]>((s) => [
+          existing.find(
+            (c) =>
+              c.name === s.name &&
+              (!s.botIds.length || s.botIds.includes(this.botId))
+          ),
+          s,
+        ])
+        .filter<[ApplicationCommand, DSlash]>(
+          (s): s is [ApplicationCommand, DSlash] => s[0] !== undefined
+        );
+
+      // filter slashes to delete
+      const deleted = existing.filter(
+        (s) =>
+          !this.slashes.find(
+            (bs) =>
+              s.name === bs.name &&
+              s.guild &&
+              bs.guilds.includes(s.guild.id) &&
+              (!bs.botIds.length || bs.botIds.includes(this.botId))
+          )
+      );
+
+      // log the changes to slashes in console if enabled by options or silent mode is turned off
+      if (options?.log.forGuild || !this.silent) {
+        console.log(
+          `${this.user?.username} >> guild: #${guild} >> command >> adding ${
+            added.length
+          } [${added.map((s) => s.name).join(", ")}]`
+        );
+
+        console.log(
+          `${this.user?.username} >> guild: #${guild} >> command >> deleting ${
+            deleted.size
+          } [${deleted.map((s) => s.name).join(", ")}]`
+        );
+
+        console.log(
+          `${this.user?.username} >> guild: #${guild} >> command >> updating ${updated.length}`
+        );
+      }
+
+      await Promise.all([
+        // add and set permissions
+        ...added.map((s) =>
+          guild.commands.create(s.toObject()).then((cmd) => {
+            if (s.permissions.length) {
+              cmd.permissions.set({ permissions: s.permissions });
+            }
+            return cmd;
+          })
+        ),
+
+        // update and set permissions
+        ...updated.map((s) =>
+          s[0].edit(s[1].toObject()).then((cmd) => {
+            if (s[1].permissions.length) {
+              cmd.permissions.set({ permissions: s[1].permissions });
+            }
+            return cmd;
+          })
+        ),
+
+        // delete
+        ...deleted.map((key) => guild.commands.delete(key)),
+      ]);
+    });
+
+    // # initialize add/update/delete task for global slashes
+    const existing = (await this.fetchSlash())?.filter((s) => !s.guild);
+    const slashes = this.slashes.filter((s) => !s.guilds?.length);
+    if (existing) {
+      const added = slashes.filter(
+        (s) => !existing.find((c) => c.name === s.name)
+      );
+
+      const updated = slashes
+        .map<[ApplicationCommand | undefined, DSlash]>((s) => [
+          existing.find((c) => c.name === s.name),
+          s,
+        ])
+        .filter<[ApplicationCommand, DSlash]>(
+          (s): s is [ApplicationCommand, DSlash] => s[0] !== undefined
+        );
+
+      const deleted = existing.filter((c) =>
+        slashes.every((s) => s.name !== c.name)
+      );
+
+      // log the changes to slashes in console if enabled by options or silent mode is turned off
+      if (options?.log.forGlobal || !this.silent) {
+        console.log(
+          `${this.user?.username} >> global >> command >> adding ${
+            added.length
+          } [${added.map((s) => s.name).join(", ")}]`
+        );
+        console.log(
+          `${this.user?.username} >> global >> command >> deleting ${
+            deleted.size
+          } [${deleted.map((s) => s.name).join(", ")}]`
+        );
+        console.log(
+          `${this.user?.username} >> global >> command >> updating ${updated.length}`
+        );
+      }
+
+      // Only available for Guilds
+      // https://discord.js.org/#/docs/main/master/class/ApplicationCommand?scrollTo=setPermissions
+      // if (slash.permissions.length <= 0) return;
+
+      await Promise.all([
+        // add
+        ...added.map((s) => this.application?.commands.create(s.toObject())),
+        // update
+        ...updated.map((s) => s[0].edit(s[1].toObject())),
+        // delete
+        ...deleted.map((key) => this.application?.commands.delete(key)),
+      ]);
+    }
+  }
+
+  /**
+   * Fetch the existing slash commands of a guild or globaly
+   * @param guild The guild ID (empty -> globaly)
+   * @returns The existing commands
+   */
+  async fetchSlash(guildID?: string) {
+    if (guildID) {
+      const guild = this.guilds.cache.get(guildID as Snowflake);
+      if (!guild) {
+        throw new GuildNotFoundError(guildID);
+      }
+      return await guild.commands.fetch();
+    }
+    return await this.application?.commands.fetch();
+  }
+
+  /**
+   * Clear the Slash commands globaly or for some guilds
+   * @param guilds The guild IDs (empty -> globaly)
+   */
+  async clearSlashes(...guilds: string[]) {
+    if (guilds.length) {
+      await Promise.all(
+        guilds.map(async (guild) => {
+          // Select and delete the commands of each guild
+          const commands = await this.fetchSlash(guild);
+          if (commands && this.guilds.cache !== undefined)
+            await Promise.all(
+              commands.map(async (value) => {
+                const guildManager = await this.guilds.cache.get(
+                  guild as Snowflake
+                );
+                if (guildManager) guildManager.commands.delete(value);
+              })
+            );
+        })
+      );
+    } else {
+      // Select and delete the commands of each guild
+      const commands = await this.fetchSlash();
+      if (commands) {
+        await Promise.all(
+          commands.map(async (value) => {
+            await this.application?.commands.delete(value);
+          })
+        );
+      }
+    }
+  }
+
+  /**
+   * Get the group tree of an interaction
+   * /hello => ["hello"]
+   * /test hello => ["test", "hello"]
+   * /test hello me => ["test", "hello", "me"]
+   * @param interaction The targeted interaction
+   * @returns The group tree
+   */
+  getInteractionGroupTree(interaction: CommandInteraction) {
+    const tree: string[] = [];
+
+    const getOptionsTree = (option: Partial<CommandInteractionOption>) => {
+      if (!option) return;
+
+      if (
+        !option.type ||
+        option.type === "SUB_COMMAND_GROUP" ||
+        option.type === "SUB_COMMAND"
+      ) {
+        if (option.name) tree.push(option.name);
+        return getOptionsTree(Array.from(option.options?.values() || [])?.[0]);
+      }
+    };
+
+    getOptionsTree({
+      name: interaction.commandName,
+      options: interaction.options,
+      type: undefined,
+    });
+
+    return tree;
+  }
+
+  /**
+   * Return the corresponding @Slash from a tree
+   * @param tree
+   * @returns The corresponding Slash
+   */
+  getSlashFromTree(tree: string[]) {
+    // Find the corresponding @Slash
+    return this.allSlashes.find((slash) => {
+      switch (tree.length) {
+        case 1:
+          // Simple command /hello
+          return (
+            slash.group === undefined &&
+            slash.subgroup === undefined &&
+            slash.name === tree[0]
+          );
+        case 2:
+          // Simple grouped command
+          // /permission user perm
+          return (
+            slash.group === tree[0] &&
+            slash.subgroup === undefined &&
+            slash.name === tree[1]
+          );
+        case 3:
+          // Grouped and subgroupped command
+          // /permission user perm
+          return (
+            slash.group === tree[0] &&
+            slash.subgroup === tree[1] &&
+            slash.name === tree[2]
+          );
+      }
+    });
+  }
+
+  /**
+   * Execute the corresponding @Slash @Button @SelectMenu based on an Interaction instance
+   * @param interaction The discord.js interaction instance
+   * @returns void
+   */
+  async executeInteraction(interaction: Interaction) {
+    if (!interaction) {
+      if (!this.silent) {
+        console.log("Interaction is undefined");
+      }
+      return;
+    }
+
+    // if interaction is a button
+    if (interaction.isButton()) {
+      const button = this.buttons.find((s) => s.id === interaction.customID);
+      if (
+        !button ||
+        (button.guilds.length &&
+          !button.guilds.includes(interaction.guild?.id as string)) ||
+        (button.botIds.length && !button.botIds.includes(this.botId))
+      )
+        return console.log(
+          `button interaction not found, interactionID: ${interaction.id} | customID: ${interaction.customID}`
+        );
+
+      return button.execute(interaction, this);
+    }
+
+    // if interaction is a button
+    if (interaction.isSelectMenu()) {
+      const menu = this.selectMenus.find((s) => s.id === interaction.customID);
+      if (
+        !menu ||
+        (menu.guilds.length &&
+          !menu.guilds.includes(interaction.guild?.id as string)) ||
+        (menu.botIds.length && !menu.botIds.includes(this.botId))
+      )
+        return console.log(
+          `selectMenu interaction not found, interactionID: ${interaction.id} | customID: ${interaction.customID}`
+        );
+
+      return menu.execute(interaction, this);
+    }
+
+    // If the interaction isn't a slash command, return
+    if (!interaction.isCommand()) return;
+
+    // Get the interaction group tree
+    const tree = this.getInteractionGroupTree(interaction);
+    const slash = this.getSlashFromTree(tree);
+
+    if (!slash) {
+      return console.log(
+        `interaction not found, commandName: ${interaction.commandName}`
+      );
+    }
+
+    if (slash.botIds.length && !slash.botIds.includes(this.botId)) return;
+
+    // Parse the options values and inject it into the @Slash method
+    return slash.execute(interaction, this);
+  }
+
+  /**
    * Manually build the app
    */
   async build() {
+    if (Client.isBuilt) return;
+    Client.isBuilt = true;
     this.loadClasses();
-    await MetadataStorage.instance.build();
+    await this.decorators.build();
   }
 
   /**
@@ -157,24 +569,22 @@ export class Client extends ClientJS {
    * @param params Params to inject
    * @param once Trigger an once event
    */
-  trigger (event: DiscordEvents, params?: any, once: boolean = false): Promise<any[]> {
-    return MetadataStorage.instance.trigger(
-      event,
-      this,
-      once
-    )(params);
+  trigger(event: DiscordEvents, params?: any, once = false): Promise<any[]> {
+    return this.decorators.trigger(event, this, once)(params);
   }
 
   private loadClasses() {
-    if (this._loadClasses) {
-      this._loadClasses.map((file) => {
-        if (typeof file === "string") {
-          const files = Glob.sync(file);
-          files.map((file) => {
-            require(file);
-          });
-        }
-      });
+    if (!this._loadClasses) {
+      return;
     }
+
+    this._loadClasses.forEach((file) => {
+      if (typeof file === "string") {
+        const files = Glob.sync(file);
+        files.forEach((file) => {
+          require(file);
+        });
+      }
+    });
   }
 }

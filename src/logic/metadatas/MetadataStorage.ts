@@ -1,29 +1,33 @@
-import { Message } from "discord.js";
-import { CommandMessage } from "../../types/public/CommandMessage";
 import {
   DOn,
   DDiscord,
   DGuard,
   Client,
-  DCommand,
-  DCommandNotFound,
   ArgsOf,
   DiscordEvents,
-  RuleBuilder,
   Modifier,
-  DecoratorUtils,
-  Rule,
-  DIService
+  DIService,
+  DSlash,
+  DOption,
+  Method,
 } from "../..";
+import { DButton, DGroup } from "../../decorators";
+import { DSelectMenu } from "../../decorators/classes/DSelectMenu";
 
 export class MetadataStorage {
   private static _instance: MetadataStorage;
   private _events: DOn[] = [];
-  private _commands: DCommand[] = [];
-  private _commandNotFounds: DCommandNotFound[] = [];
   private _guards: DGuard[] = [];
+  private _slashes: DSlash[] = [];
+  private _allSlashes: DSlash[] = [];
+  private _buttons: DButton[] = [];
+  private _selectMenu: DSelectMenu[] = [];
+  private _options: DOption[] = [];
   private _discords: DDiscord[] = [];
   private _modifiers: Modifier<any>[] = [];
+
+  private _groups: DGroup<DSlash>[] = [];
+  private _subGroups: DGroup<DOption>[] = [];
 
   static get instance() {
     if (!this._instance) {
@@ -40,16 +44,57 @@ export class MetadataStorage {
     return this._events as readonly DOn[];
   }
 
+  /**
+   * Get the list of used events without duplications
+   */
+  get usedEvents() {
+    return this.events.reduce<DOn[]>((prev, event, index) => {
+      const found = this.events.find((event2) => event.event === event2.event);
+      const foundIndex = found ? this.events.indexOf(found) : -1;
+
+      if (foundIndex === index || found?.once !== event.once) {
+        prev.push(event);
+      }
+
+      return prev;
+    }, []) as readonly DOn[];
+  }
+
   get discords() {
     return this._discords as readonly DDiscord[];
   }
 
-  get commands() {
-    return this._commands as readonly DCommand[];
+  get slashes() {
+    return this._slashes as readonly DSlash[];
   }
 
-  get commandsNotFound() {
-    return this._commandNotFounds as readonly DCommandNotFound[];
+  get buttons() {
+    return this._buttons as readonly DButton[];
+  }
+
+  get selectMenus() {
+    return this._selectMenu as readonly DSelectMenu[];
+  }
+
+  get allSlashes() {
+    return this._allSlashes as readonly DSlash[];
+  }
+
+  get groups() {
+    return this._groups as readonly DGroup[];
+  }
+
+  get subGroups() {
+    return this._subGroups as readonly DGroup[];
+  }
+
+  private get discordMembers(): readonly Method[] {
+    return [
+      ...this._slashes,
+      ...this._events,
+      ...this._buttons,
+      ...this._selectMenu,
+    ];
   }
 
   addModifier(modifier: Modifier<any>) {
@@ -60,14 +105,28 @@ export class MetadataStorage {
     this._events.push(on);
   }
 
-  addCommand(on: DCommand) {
-    this._commands.push(on);
-    this.addOn(on);
+  addSlash(slash: DSlash) {
+    this._slashes.push(slash);
   }
 
-  addCommandNotFound(on: DCommandNotFound) {
-    this._commandNotFounds.push(on);
-    this.addOn(on);
+  addButton(button: DButton) {
+    this._buttons.push(button);
+  }
+
+  addSelectMenu(selectMenu: DSelectMenu) {
+    this._selectMenu.push(selectMenu);
+  }
+
+  addOption(option: DOption) {
+    this._options.push(option);
+  }
+
+  addGroup(group: DGroup<DSlash>) {
+    this._groups.push(group);
+  }
+
+  addSubGroup(subGroup: DGroup<DOption>) {
+    this._subGroups.push(subGroup);
   }
 
   addGuard(guard: DGuard) {
@@ -81,178 +140,199 @@ export class MetadataStorage {
   }
 
   async build() {
-    // Link the events with their instances
-    this._events = this._events.filter((on, index) => {
+    // Link the events with @Discord class instances
+    this.discordMembers.forEach((member) => {
+      // Find the linked @Discord of an event
       const discord = this._discords.find((instance) => {
-        return instance.from === on.classRef;
+        return instance.from === member.from;
       });
 
-      on.linkedDiscord = discord;
+      if (!discord) return;
 
-      // If the command is imported remove the original one
-      if (on.hidden) {
-        this.removeEvent(on);
-        return false;
+      // You can get the @Discord that wrap a @Command/@On by using
+      // on.discord or slash.discord
+      member.discord = discord;
+
+      if (member instanceof DSlash) {
+        discord.slashes.push(member);
       }
-      return true;
+
+      if (member instanceof DOn) {
+        discord.events.push(member);
+      }
+
+      if (member instanceof DButton) {
+        discord.buttons.push(member);
+      }
+
+      if (member instanceof DSelectMenu) {
+        discord.selectMenus.push(member);
+      }
     });
 
-    await Modifier.applyFromModifierListToList(this._modifiers, this._commands);
-    await Modifier.applyFromModifierListToList(this._modifiers, this._commandNotFounds);
     await Modifier.applyFromModifierListToList(this._modifiers, this._discords);
+    await Modifier.applyFromModifierListToList(this._modifiers, this._events);
+    await Modifier.applyFromModifierListToList(this._modifiers, this._slashes);
+    await Modifier.applyFromModifierListToList(this._modifiers, this._buttons);
+    await Modifier.applyFromModifierListToList(this._modifiers, this._options);
+    await Modifier.applyFromModifierListToList(
+      this._modifiers,
+      this._selectMenu
+    );
 
-    this._events.map((on) => {
-      on.guards = DecoratorUtils.getLinkedObjects(on, this._guards);
-      on.compileGuardFn();
+    // Set the class level "group" property of all @Slash
+    // Cannot achieve it using modifiers
+    this._groups.forEach((group) => {
+      this._slashes.forEach((slash) => {
+        if (group.from !== slash.from) {
+          return;
+        }
+
+        slash.group = group.name;
+      });
     });
+
+    this._allSlashes = this._slashes;
+    this._slashes = this.groupSlashes();
   }
 
-  removeEvent(event: DOn) {
-    const command = DecoratorUtils.getLinkedObjects(event, this._commands)[0];
-    if (command) {
-      this._commands.splice(this._commands.indexOf(command), 1);
-    }
+  private groupSlashes() {
+    const groupedSlashes: Map<string, DSlash> = new Map();
 
-    const commandNotFound = DecoratorUtils.getLinkedObjects(event, this._commandNotFounds)[0];
-    if (commandNotFound) {
-      this._commandNotFounds.splice(this._commandNotFounds.indexOf(commandNotFound), 1);
-    }
+    // Create Slashes from class groups that will wraps the commands
+    //
+    // "name": "permissions",
+    // "description": "Get or edit permissions for a user or a role",
+    // "options": [
+    //    ...comands
+    // ]
+    //
+    this._groups.forEach((group) => {
+      const slashParent = DSlash.create(
+        group.name,
+        group.infos?.description
+      ).decorate(group.classRef, group.key, group.method);
 
-    return event;
+      const discord = this._discords.find((instance) => {
+        return instance.from === slashParent.from;
+      });
+
+      if (!discord) return;
+
+      slashParent.discord = discord;
+
+      slashParent.guilds = [
+        ...Client.slashGuilds,
+        ...slashParent.discord.guilds,
+      ];
+      slashParent.botIds = [...slashParent.discord.botIds];
+      slashParent.permissions = [
+        ...slashParent.permissions,
+        ...slashParent.discord.permissions,
+      ];
+      slashParent.defaultPermission = slashParent.discord.defaultPermission;
+
+      groupedSlashes.set(group.name, slashParent);
+
+      const slashes = this._slashes.filter((slash) => {
+        return slash.group === slashParent.name && !slash.subgroup;
+      });
+
+      slashes.forEach((slash) => {
+        slashParent.options.push(slash.toSubCommand());
+      });
+    });
+
+    // Create for each subgroup (@Group on methods) create an Option based on Slash
+    //
+    // "name": "permissions",
+    // "description": "Get or edit permissions for a user or a role",
+    // "options": [
+    //    {
+    //        "name": "user",
+    //        "description": "Get or edit permissions for a user",
+    //        "type": "SUB_COMMAND_GROUP"
+    //        "options": [
+    //            ....
+    //        ]
+    //     }
+    // ]
+    this._subGroups.forEach((subGroup) => {
+      const option = DOption.create(
+        subGroup.name,
+        "SUB_COMMAND_GROUP",
+        subGroup.infos?.description
+      ).decorate(subGroup.classRef, subGroup.key, subGroup.method);
+
+      // Get the slashes that are in this subgroup
+      const slashes = this._slashes.filter((slash) => {
+        return slash.subgroup === option.name;
+      });
+
+      // Convert this slashes into options and add it to the option parent
+      // this slashes are the node of the options
+      //
+      // "name": "permissions",
+      // "description": "Get or edit permissions for a user or a role",
+      // "options": [
+      //     {
+      //         "name": "user",
+      //         "description": "Get or edit permissions for a user",
+      //         "type": "SUB_COMMAND_GROUP"
+      //         "options": [
+      //             {
+      //                 "name": "get",
+      //                 "description": "Get permissions for a user",
+      //                 "type": "SUB_COMMAND"
+      //                 "options": [
+      //                 ]
+      //              }
+      //          ]
+      //      }
+      // ]
+      //
+      slashes.forEach((slash) => {
+        option.options.push(slash.toSubCommand());
+      });
+
+      // The the root option to the root Slash command
+      const groupSlash = slashes?.[0].group
+        ? groupedSlashes.get(slashes[0].group)
+        : undefined;
+      if (groupSlash) {
+        groupSlash.options.push(option);
+      }
+    });
+
+    return [
+      ...this._slashes.filter((s) => !s.group && !s.subgroup),
+      ...Array.from(groupedSlashes.values()),
+    ];
   }
 
-  trigger<Event extends DiscordEvents>(event: Event, client: Client, once: boolean = false) {
+  /**
+   * Trigger a discord event
+   * @param event The event to trigger
+   * @param client The discord.ts client instance
+   * @param once Should we execute the event once
+   */
+  trigger<Event extends DiscordEvents>(
+    event: Event,
+    client: Client,
+    once = false
+  ): (...params: ArgsOf<Event>) => Promise<any> {
     const responses: any[] = [];
 
-    let eventsToExecute = this._events.filter((on) => {
-      return on.event === event && on.once === once && !(on instanceof DCommandNotFound);
+    const eventsToExecute = this._events.filter((on) => {
+      return on.event === event && on.once === once;
     });
 
     return async (...params: ArgsOf<Event>) => {
-      let paramsToInject: any = params;
-      const isMessage = event === "message";
-      let isCommand = false;
-      let notFoundOn;
-      let onCommands = [];
-
-      onCommands = (await Promise.all(this.events.map(async (on) => {
-        if (isMessage && on instanceof DCommand) {
-          const message = params[0] as Message;
-          isCommand = true;
-          let pass: RuleBuilder[] = undefined;
-
-          if (message.author.id === client.user.id) {
-            return;
-          }
-
-          const commandMessage = CommandMessage.create(
-            message,
-            on
-          );
-
-          const computedDiscordRules = (await Promise.all(
-            on.linkedDiscord.argsRules.map(async (ar) => await ar(commandMessage, client))
-          )).flatMap((rules) => {
-            return RuleBuilder.join(Rule(""), ...rules);
-          });
-
-          let computedCommandRules = (await Promise.all(
-            on.argsRules.map(async (ar) => await ar(commandMessage, client))
-          ));
-
-          if (computedCommandRules.length <= 0) {
-            computedCommandRules = [[
-              Rule(on.key).spaceOrEnd()
-            ]];
-          }
-
-          const allRules = computedDiscordRules.reduce<RuleBuilder[][]>((prev, cdr) => {
-            return [
-              ...computedCommandRules.map<RuleBuilder[]>((ccr) => [
-                cdr,
-                ...RuleBuilder.fromArray(ccr)
-              ]),
-              ...prev
-            ];
-          }, []).flatMap((rules) => {
-            const res = RuleBuilder.join(Rule(""), ...rules);
-            return [[
-              res.copy().setSource(res.source.replace(Client.variablesExpression, "")),
-              res
-            ]];
-          });
-
-          // Test if the message match any of the rules
-          pass = allRules.find((rule) => {
-            return rule[0].regex.test(message.content);
-          });
-
-          if (pass) {
-            CommandMessage.parseArgs(pass, commandMessage);
-
-            commandMessage.commandContent = commandMessage.content;
-            computedDiscordRules.map((cdr) => {
-              commandMessage.commandContent = commandMessage.commandContent.replace(cdr.regex, "");
-            });
-
-            paramsToInject = commandMessage;
-            return on;
-          } else {
-            // If it doesn't pass any of the rules => execute the commandNotFound only on the discord instance that match the message discord rules
-            const passNotFound = computedDiscordRules.some((cdr) => {
-              return cdr.regex.test(message.content);
-            });
-
-            if (passNotFound) {
-              notFoundOn = on.linkedDiscord.commandNotFound;
-              paramsToInject = commandMessage;
-            }
-          }
-        } else if (
-          on.event === "message" &&
-          !(on instanceof DCommandNotFound) &&
-          !(on instanceof DCommand)
-        ) {
-          return on;
-        }
-        return undefined;
-      }))).filter(c => c);
-
-      if (isCommand) {
-        const realCommands = onCommands.filter((e) => e instanceof DCommand);
-        const onsInCommands = onCommands.filter((e) => !(e instanceof DCommand));
-
-        if (realCommands.length > 0) {
-          eventsToExecute = onCommands;
-        } else if (notFoundOn && realCommands.length <= 0) {
-          eventsToExecute = [
-            ...onsInCommands,
-            notFoundOn
-          ];
-        } else if (onsInCommands.length > 0) {
-          eventsToExecute = onsInCommands;
-        } else {
-          eventsToExecute = [];
-        }
-      }
-
       for (const on of eventsToExecute) {
-        let injectedParams = paramsToInject;
-        if (
-          isCommand &&
-          !Array.isArray(injectedParams) &&
-          !(on instanceof DCommand || on instanceof DCommandNotFound)
-        ) {
-          injectedParams = [paramsToInject];
-        }
-
-        const res = await on.getMainFunction<Event>()(injectedParams, client);
-        if (res.executed) {
-          responses.push(res.res);
-        }
-        if (res.on instanceof DCommandNotFound) {
-          break;
-        }
+        const botIDs = [...on.botIds, ...on.discord.botIds];
+        if (botIDs.length && !botIDs.includes(client.botId)) return;
+        const res = await on.execute(params, client);
+        responses.push(res);
       }
       return responses;
     };
